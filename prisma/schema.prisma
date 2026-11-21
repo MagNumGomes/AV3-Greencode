@@ -1,0 +1,389 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PapelUsuario {
+  ADMINISTRADOR
+  OPERADOR_CADASTRO
+  GESTOR_ALMOXARIFADO
+  AUDITOR
+}
+
+enum StatusLote {
+  RECEBIDO
+  EM_TRIAGEM
+  TRIAGEM_CONCLUIDA
+  ENCAMINHADO
+  FINALIZADO
+}
+
+enum TipoEquipamento {
+  COMPUTADOR_MESA
+  NOTEBOOK
+  MONITOR
+  IMPRESSORA
+  SERVIDOR
+  ROTEADOR
+  CABO_ESTRUTURADO
+  FONTE_ALIMENTACAO
+}
+
+enum EstadoFisico {
+  NOVO
+  BOM_ESTADO
+  USADO_LEVE
+  USADO_MODERADO
+  DANIFICADO_LEVE
+  DANIFICADO_GRAVE
+  INSERVIVEL
+}
+
+enum StatusRastreamento {
+  AGUARDANDO_TRIAGEM
+  EM_TRIAGEM
+  AGUARDANDO_DESMONTE
+  EM_DESMONTE
+  PECAS_REAPROVEITADAS
+  MATERIAL_RECICLAVEL
+  DESCARTE_SEGURO
+  BAIXA_DEFINITIVA
+}
+
+enum TipoMovimentacao {
+  RECEBIMENTO
+  STATUS
+  ESTADO_FISICO
+  LOCALIZACAO
+}
+
+// ---------- AV3: API pública ----------
+
+enum EscopoChaveApi {
+  RASTREABILIDADE_LEITURA
+  LOTES_LEITURA
+  LOTES_ESCRITA
+  RELATORIOS_ANALITICOS
+}
+
+// ---------- AV3: camada analítica ----------
+
+enum TipoAnalise {
+  EFICIENCIA_OPERACIONAL
+  RENTABILIDADE
+  VIDA_UTIL
+}
+
+enum OrigemAnalise {
+  AGENDADA
+  API_INTERNA
+  API_PUBLICA
+}
+
+enum DimensaoEficiencia {
+  GERAL
+  OPERADOR
+  MES
+}
+
+enum NivelRentabilidade {
+  TIPO
+  TIPO_ESTADO
+  TIPO_MARCA_MODELO
+  TIPO_MARCA_MODELO_ESTADO
+}
+
+enum StatusTarefa {
+  PENDENTE
+  PROCESSANDO
+  CONCLUIDA
+  FALHOU
+}
+
+enum FormatoRelatorio {
+  JSON
+  CSV
+}
+
+model Usuario {
+  id            String               @id @default(uuid()) @db.Uuid
+  usuario       String               @unique @db.VarChar(60)
+  hashSenha     String
+  papel         PapelUsuario
+  ativo         Boolean              @default(true)
+  tokenVersao   Int                  @default(1)
+  versao        Int                  @default(1)
+  criadoEm      DateTime             @default(now()) @db.Timestamptz(3)
+  atualizadoEm  DateTime             @updatedAt @db.Timestamptz(3)
+  movimentacoes Movimentacao[]
+  auditorias    Auditoria[]
+  chavesCriadas ChaveApi[]
+  analises      RelatorioAnalitico[]
+  tarefas       TarefaAnalitica[]
+}
+
+model Organizacao {
+  id                String               @id @default(uuid()) @db.Uuid
+  razaoSocial       String               @db.VarChar(200)
+  cnpj              String               @unique @db.VarChar(14)
+  inscricaoEstadual String               @default("") @db.VarChar(30)
+  enderecoCompleto  String               @db.VarChar(500)
+  telefone          String               @db.VarChar(30)
+  email             String               @db.VarChar(254)
+  dataCadastro      DateTime             @default(now()) @db.Timestamptz(3)
+  ativo             Boolean              @default(true)
+  versao            Int                  @default(1)
+  contrato          Contrato?
+  lotes             Lote[]
+  chavesApi         ChaveApi[]
+  analises          RelatorioAnalitico[]
+  tarefas           TarefaAnalitica[]
+}
+
+model Contrato {
+  id                  String      @id @default(uuid()) @db.Uuid
+  organizacaoId       String      @unique @db.Uuid
+  dataAssinatura      DateTime    @db.Timestamptz(3)
+  dataVencimento      DateTime    @db.Timestamptz(3)
+  clausulas           Json
+  valorMensal         Decimal     @db.Decimal(14, 2)
+  renovacaoAutomatica Boolean     @default(false)
+  versao              Int         @default(1)
+  organizacao         Organizacao @relation(fields: [organizacaoId], references: [id], onDelete: Restrict)
+}
+
+model Lote {
+  id                  String        @id @default(uuid()) @db.Uuid
+  dataEntrada         DateTime      @db.Timestamptz(3)
+  organizacaoId       String        @db.Uuid
+  notaFiscal          String        @db.VarChar(100)
+  transportadora      String        @db.VarChar(200)
+  statusProcessamento StatusLote    @default(RECEBIDO)
+  observacoes         String        @default("") @db.VarChar(2000)
+  versao              Int           @default(1)
+  organizacao         Organizacao   @relation(fields: [organizacaoId], references: [id], onDelete: Restrict)
+  equipamentos        Equipamento[]
+
+  @@index([organizacaoId, dataEntrada])
+  @@index([statusProcessamento, dataEntrada])
+}
+
+model Equipamento {
+  id                    String             @id @default(uuid()) @db.Uuid
+  codigoBarrasInterno   String             @unique @db.VarChar(100)
+  tipo                  TipoEquipamento
+  marca                 String             @db.VarChar(100)
+  modelo                String             @db.VarChar(100)
+  anoFabricacao         Int
+  estadoFisico          EstadoFisico
+  pesoQuilogramas       Decimal            @db.Decimal(12, 3)
+  loteId                String             @db.Uuid
+  posicaoNoLote         Int
+  statusRastreamento    StatusRastreamento @default(AGUARDANDO_TRIAGEM)
+  localizacaoAtual      String             @default("Recebimento") @db.VarChar(200)
+  // AV3: valor obtido na destinação; base histórica da análise de rentabilidade.
+  valorRecuperado       Decimal?           @db.Decimal(14, 2)
+  versao                Int                @default(1)
+  lote                  Lote               @relation(fields: [loteId], references: [id], onDelete: Restrict)
+  historicoMovimentacao Movimentacao[]
+  previsoesVidaUtil     PrevisaoVidaUtil[]
+
+  @@unique([loteId, posicaoNoLote])
+  @@index([statusRastreamento])
+  @@index([tipo, estadoFisico])
+}
+
+model Movimentacao {
+  id            String           @id @default(uuid()) @db.Uuid
+  sequencia     Int              @unique @default(autoincrement())
+  equipamentoId String           @db.Uuid
+  dataHora      DateTime         @default(now()) @db.Timestamptz(3)
+  tipo          TipoMovimentacao
+  origem        String           @db.VarChar(200)
+  destino       String           @db.VarChar(200)
+  // Exatamente um responsável: usuário interno ou chave de API de parceiro (CHECK no banco).
+  responsavelId String?          @db.Uuid
+  chaveApiId    String?          @db.Uuid
+  responsavel   String           @db.VarChar(60)
+  observacao    String           @db.VarChar(2000)
+  versao        Int              @default(1)
+  equipamento   Equipamento      @relation(fields: [equipamentoId], references: [id], onDelete: Restrict)
+  usuario       Usuario?         @relation(fields: [responsavelId], references: [id], onDelete: Restrict)
+  chaveApi      ChaveApi?        @relation(fields: [chaveApiId], references: [id], onDelete: Restrict)
+
+  @@index([equipamentoId, dataHora])
+  @@index([tipo, destino, dataHora])
+}
+
+model Auditoria {
+  id                   String    @id @default(uuid()) @db.Uuid
+  dataHora             DateTime  @default(now()) @db.Timestamptz(3)
+  operacao             String    @db.VarChar(80)
+  entidade             String    @db.VarChar(40)
+  entidadeId           String    @db.Uuid
+  dadosAntes           Json?
+  dadosDepois          Json
+  usuarioResponsavelId String?   @db.Uuid
+  chaveApiId           String?   @db.Uuid
+  versao               Int       @default(1)
+  usuario              Usuario?  @relation(fields: [usuarioResponsavelId], references: [id], onDelete: Restrict)
+  chaveApi             ChaveApi? @relation(fields: [chaveApiId], references: [id], onDelete: Restrict)
+
+  @@index([entidade, entidadeId, dataHora])
+  @@index([dataHora])
+}
+
+// ---------- AV3: API pública ----------
+
+model ChaveApi {
+  id              String               @id @default(uuid()) @db.Uuid
+  parceiro        String               @db.VarChar(200)
+  // Parte pública e única da chave, usada para localizar o registro sem varrer hashes.
+  prefixo         String               @unique @db.VarChar(16)
+  // SHA-256 da chave completa; o segredo nunca é armazenado.
+  hashSegredo     String               @db.Char(64)
+  escopos         EscopoChaveApi[]
+  organizacaoId   String               @db.Uuid
+  limitePorMinuto Int                  @default(60)
+  ativa           Boolean              @default(true)
+  expiraEm        DateTime?            @db.Timestamptz(3)
+  ultimoUsoEm     DateTime?            @db.Timestamptz(3)
+  revogadaEm      DateTime?            @db.Timestamptz(3)
+  criadoEm        DateTime             @default(now()) @db.Timestamptz(3)
+  criadoPorId     String               @db.Uuid
+  versao          Int                  @default(1)
+  organizacao     Organizacao          @relation(fields: [organizacaoId], references: [id], onDelete: Restrict)
+  criadoPor       Usuario              @relation(fields: [criadoPorId], references: [id], onDelete: Restrict)
+  movimentacoes   Movimentacao[]
+  auditorias      Auditoria[]
+  analises        RelatorioAnalitico[]
+  tarefas         TarefaAnalitica[]
+
+  @@index([organizacaoId])
+}
+
+// ---------- AV3: camada analítica ----------
+
+// Cabeçalho imutável de cada execução analítica; preserva o histórico de previsões.
+model RelatorioAnalitico {
+  id                       String                   @id @default(uuid()) @db.Uuid
+  tipo                     TipoAnalise
+  origem                   OrigemAnalise
+  // Nulo = análise global de todas as organizações.
+  organizacaoId            String?                  @db.Uuid
+  parametros               Json
+  resumo                   Json
+  versaoModelo             String                   @db.VarChar(20)
+  amostras                 Int
+  duracaoMs                Int
+  geradoEm                 DateTime                 @default(now()) @db.Timestamptz(3)
+  solicitanteUsuarioId     String?                  @db.Uuid
+  solicitanteChaveApiId    String?                  @db.Uuid
+  organizacao              Organizacao?             @relation(fields: [organizacaoId], references: [id], onDelete: Restrict)
+  solicitanteUsuario       Usuario?                 @relation(fields: [solicitanteUsuarioId], references: [id], onDelete: Restrict)
+  solicitanteChaveApi      ChaveApi?                @relation(fields: [solicitanteChaveApiId], references: [id], onDelete: Restrict)
+  indicadoresEficiencia    IndicadorEficiencia[]
+  indicadoresRentabilidade IndicadorRentabilidade[]
+  modelosVidaUtil          ModeloVidaUtil[]
+  previsoesVidaUtil        PrevisaoVidaUtil[]
+  tarefas                  TarefaAnalitica[]
+
+  @@index([tipo, organizacaoId, geradoEm])
+  @@index([geradoEm])
+}
+
+model IndicadorEficiencia {
+  id                String             @id @default(uuid()) @db.Uuid
+  relatorioId       String             @db.Uuid
+  dimensao          DimensaoEficiencia
+  chave             String             @db.VarChar(100)
+  lotes             Int
+  esperaMediaHoras  Float
+  triagemMediaHoras Float
+  totalMediaHoras   Float
+  totalMedianaHoras Float
+  totalDesvioHoras  Float
+  totalP90Horas     Float
+  relatorio         RelatorioAnalitico @relation(fields: [relatorioId], references: [id], onDelete: Cascade)
+
+  @@unique([relatorioId, dimensao, chave])
+}
+
+model IndicadorRentabilidade {
+  id              String             @id @default(uuid()) @db.Uuid
+  relatorioId     String             @db.Uuid
+  nivel           NivelRentabilidade
+  tipoEquipamento TipoEquipamento
+  marca           String?            @db.VarChar(100)
+  modelo          String?            @db.VarChar(100)
+  estadoFisico    EstadoFisico?
+  amostras        Int
+  valorMedio      Decimal            @db.Decimal(14, 2)
+  valorMediano    Decimal            @db.Decimal(14, 2)
+  desvioPadrao    Decimal            @db.Decimal(14, 2)
+  valorTotal      Decimal            @db.Decimal(16, 2)
+  relatorio       RelatorioAnalitico @relation(fields: [relatorioId], references: [id], onDelete: Cascade)
+
+  @@index([relatorioId, nivel, valorMedio])
+}
+
+// Reta de mínimos quadrados por tipo: categoria de estado físico = intercepto + inclinação × idade.
+model ModeloVidaUtil {
+  id                  String             @id @default(uuid()) @db.Uuid
+  relatorioId         String             @db.Uuid
+  tipoEquipamento     TipoEquipamento
+  amostras            Int
+  intercepto          Float?
+  inclinacao          Float?
+  r2                  Float?
+  idadeInservivelAnos Float?
+  confiavel           Boolean
+  observacao          String             @db.VarChar(300)
+  relatorio           RelatorioAnalitico @relation(fields: [relatorioId], references: [id], onDelete: Cascade)
+  previsoes           PrevisaoVidaUtil[]
+
+  @@unique([relatorioId, tipoEquipamento])
+}
+
+model PrevisaoVidaUtil {
+  id                     String             @id @default(uuid()) @db.Uuid
+  relatorioId            String             @db.Uuid
+  modeloId               String             @db.Uuid
+  equipamentoId          String             @db.Uuid
+  idadeAtualAnos         Float
+  vidaRemanescenteAnos   Float
+  dataPrevistaInservivel DateTime           @db.Timestamptz(3)
+  relatorio              RelatorioAnalitico @relation(fields: [relatorioId], references: [id], onDelete: Cascade)
+  modelo                 ModeloVidaUtil     @relation(fields: [modeloId], references: [id], onDelete: Cascade)
+  equipamento            Equipamento        @relation(fields: [equipamentoId], references: [id], onDelete: Restrict)
+
+  @@unique([relatorioId, equipamentoId])
+  @@index([equipamentoId, dataPrevistaInservivel])
+}
+
+// Tarefa assíncrona solicitada pela API; o identificador também é o jobId na fila.
+model TarefaAnalitica {
+  id                    String              @id @default(uuid()) @db.Uuid
+  tipo                  TipoAnalise
+  formato               FormatoRelatorio
+  status                StatusTarefa        @default(PENDENTE)
+  organizacaoId         String?             @db.Uuid
+  solicitanteUsuarioId  String?             @db.Uuid
+  solicitanteChaveApiId String?             @db.Uuid
+  tentativas            Int                 @default(0)
+  ultimoErro            String?             @db.VarChar(1000)
+  relatorioId           String?             @db.Uuid
+  criadaEm              DateTime            @default(now()) @db.Timestamptz(3)
+  iniciadaEm            DateTime?           @db.Timestamptz(3)
+  concluidaEm           DateTime?           @db.Timestamptz(3)
+  organizacao           Organizacao?        @relation(fields: [organizacaoId], references: [id], onDelete: Restrict)
+  solicitanteUsuario    Usuario?            @relation(fields: [solicitanteUsuarioId], references: [id], onDelete: Restrict)
+  solicitanteChaveApi   ChaveApi?           @relation(fields: [solicitanteChaveApiId], references: [id], onDelete: Restrict)
+  relatorio             RelatorioAnalitico? @relation(fields: [relatorioId], references: [id], onDelete: Restrict)
+
+  @@index([status, criadaEm])
+  @@index([solicitanteChaveApiId, criadaEm])
+}
